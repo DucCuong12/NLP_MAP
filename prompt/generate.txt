@@ -26,12 +26,11 @@ Label: {label}
 
 <instructions>
 
-Using an example above to analysis:
-1. Analyze why the given answer and explanation yield the specified label.  
-2. Invent a new math question of similar style and complexity.  
-3. Choose an answer that matches the correctness component `X`. 
-4. Choose an answer (A/B/C/D) that matches the correctness component `X`.  
-
+Using an example above to analysis and do task:
+1. **Analyze** the original example to confirm why its answer/explanation map to the given label.  
+2. **Invent** a new math problem in the same genre.  
+3. **Select** an answer consistent with “correct” or “incorrect” (`X`).  
+4. **Compose** an explanation reflecting the same misconception or level of understanding (`Y:Z`).  
 </instructions>
 
 
