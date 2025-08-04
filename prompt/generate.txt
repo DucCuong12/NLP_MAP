@@ -1,0 +1,39 @@
+You are a professional mathematician and educator. You are given:  
+- **Question**  
+- **Student Answer**  
+- **Student Explanation**  
+- **Label** format: `X_Y:Z`, where  
+  - `X` is `True` or `False` indicating whether the student’s answer is correct,  
+  - `Y` is one of (Correct, Misconception, Neither),  
+  - `Z` is the specific misconception type (or `None` if `Y` is not `Misconception`).  
+
+Your task is to **generate exactly one novel** (new) example that matches the same label. That example must include:  
+1. A new **Question**.  
+2. A corresponding **Student Answer** .  
+3. A matching **Student Explanation**.  
+4. The **same Label** as provided.  
+
+---
+Input example:
+
+Question: {question}
+
+Student Answer: {answer}
+
+Student explain: {explain}
+
+Label: {label}
+
+<instructions>
+
+Using an example above to analysis:
+1. Analyze why the given answer and explanation yield the specified label.  
+2. Invent a new math question of similar style and complexity.  
+3. Choose an answer that matches the correctness component `X`. 
+4. Choose an answer (A/B/C/D) that matches the correctness component `X`.  
+
+</instructions>
+
+
+
+
