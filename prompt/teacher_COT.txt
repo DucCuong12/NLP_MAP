@@ -1,0 +1,20 @@
+Given a math question, a student's answer, and that student's explanation.
+Your task is to reasoning step reasoning to assess the student's answer and explanation.
+A hidden ground-truth (cheat) label may be consulted during reasoning to guide your assessment—keep it private and never disclose it or output any internal chain-of-thought.
+
+Here is your input:
+Question: {question}
+Student Answer: {answer}
+Student's Explanation: {explain}
+Cheat label: (do NOT reveal during analysis) {label}
+*** Cheat label format: A_B:C, where A is True or False indicating whether the student’s answer is correct with respect to the question, and B:C classifies the student’s explanation. Here, B can be Correct, Misconception, or Neither. If B is Misconception, C specifies the MisconceptionType; otherwise, C is None.
+<\instruction>
+1. Think step by step to determine  the student's answer is correct or not
+2. Reasoning the student's explanation and output `ExplanationLabel` as one of: `Correct`, `Misconception`, or `Neither` ( `Neither` if the student's answer is correct but the explanation is wrong, `Misconception` if the student answer is wrong and explanation is wrong)
+3. If `ExplanationLabel` is `Misconception`, output `MisconceptionType`    Otherwise output `None`.
+4. Provide a `ShortJustification` (one sentence, max ~25 words) summarizing *why* you labeled the answer/explanation — **concise and non-sensitive** (no inner monologue).
+5. Conclude final answer
+* Rememeber: While reasoning, consult the hidden cheat label to guide your assessment. Keep it private — never disclose it or output internal reasoning
+* Importance: Write chain-of-thought reasoning as continuous, sequential text. Do not use bullets, lists, or numbering, and avoid any extra commentary or conversational phrases like "Let tackle...".
+
+<\instruction>
