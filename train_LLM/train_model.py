@@ -6,7 +6,7 @@ import os
 import time
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForCausalLM, get_scheduler
+from transformers import AutoTokenizer, AutoModelForCausalLM, get_scheduler, get_cosine_schedule_with_warmup, DataCollatorForSeq2Seq
 from peft import LoraConfig, TaskType, get_peft_model
 from tqdm.auto import tqdm
 import numpy as np
@@ -45,20 +45,26 @@ def run_main():
     valid_ds = dataset_creator.get_dataset(valid_df)
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
-    collator_fn = TextCollator(tokenizer=tokenizer, pad_to_multiple_of=16)
+    data_collator = DataCollatorForSeq2Seq(
+    tokenizer=tokenizer,
+    model=model, # Cần truyền model vào để nó biết cách shift labels nếu cần
+    label_pad_token_id=-100, # Quan trọng: nói cho nó biết pad labels bằng -100
+    pad_to_multiple_of=8
+    )
+    # collator_fn = TextCollator(tokenizer=tokenizer, pad_to_multiple_of=16)
     # Chuyển thành dataloader
     print("Change to dl...")
     train_dl = DataLoader(
         train_ds,
         batch_size = cfg.batch_size,
         shuffle = True,
-        collate_fn = collator_fn
+        collate_fn = data_collator
     ) 
     valid_dl = DataLoader(
         valid_ds,
         batch_size = cfg.batch_size,
         shuffle = True,
-        collate_fn = collator_fn
+        collate_fn = data_collator
     )
 
     print("*"*50)

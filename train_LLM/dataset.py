@@ -71,7 +71,7 @@ class MathDataset:
         df = self.pre_process(df).reset_index(drop=True)
 
         ds = Dataset.from_pandas(df)
-        ds = ds.map(self.tokenize, batched=True)
+        ds = ds.map(self.tokenize, batched=True, remove_columns=ds.column_names)
 
         return ds
         
