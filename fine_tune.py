@@ -20,7 +20,7 @@ model = AutoModel.from_pretrained(model_name)
 os.chdir('/bigdisk/cuongvd17/Testing/kaggle')
 print(os.getcwd())
 model = torch.nn.DataParallel(model, device_ids=list(range(torch.cuda.device_count())))
-state_dict = torch.load('checkpoints/best_model_proposed_110.pth')  
+state_dict = torch.load('checkpoints/best_model_proposed_190.pth')  
 model.load_state_dict(state_dict)  # Use strict=False to ignore missing keys
 # model.load_state_dict(torch.load("checkpoints/best_model_proposed.pth"))
 ######## Get data #############
@@ -105,7 +105,7 @@ def infer(model,train_dataloader):
             for i in range(len(label)):
                 text.append({'text': outputs.last_hidden_state[:,0,:][i].detach().cpu(), 'label': label[i]})
     return text
-def save_embeddings_to_csv(text, filename="embeddings_test110.csv"):
+def save_embeddings_to_csv(text, filename="embeddings_test190.csv"):
     rows = []
     for item in text:
         emb = item['text'].cpu().numpy().tolist()
