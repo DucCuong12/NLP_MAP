@@ -1,6 +1,6 @@
 # Cấu hình
 class Config:
-    def __init__(self, model_name = "/kaggle/input/qwen2.5/transformers/0.5b-instruct/1",):
+    def __init__(self, model_name = "Qwen/Qwen3-14B"):
         self.model_name = model_name
         self.debug = False
         self.save_model = True  
@@ -14,12 +14,12 @@ class Config:
         self.lora_target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
         self.lora_modules_to_save = []
         
-        self.epochs = 2
+        self.epochs = 20
         self.max_length = 384
-        self.batch_size = 2
-        self.per_device_eval_batch_size = 8
-        self.gradient_accumulation_steps = 4 
-        self.eval_frequency = 50 
+        self.batch_size = 4
+        self.per_device_eval_batch_size = 1
+        self.gradient_accumulation_steps = 1
+        self.eval_frequency = 1000
     
         self.optimizer_name = "AdamW"
         self.lr = 1e-4
