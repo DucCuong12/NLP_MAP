@@ -14,7 +14,8 @@ from pathlib import Path
 load_dotenv()
 print(os.getenv('OPENAI_API_KEY'))
 print(os.getenv("OPENAI_BASE_URL"))
-os.chdir('/bigdisk/cuongvd17/Testing/kaggle')
+# os.chdir('/bigdisk/cuongvd17/Testing/kaggle')
+os.chdir('E:/LLM/MAP/NLP_MAP')
 df = prepare_df('train.csv')
 dataset = Dataset.from_pandas(df)
 dataset_new = dataset.map(prepare_data, remove_columns=dataset.column_names)
@@ -42,7 +43,7 @@ def get_response(model, example,epoch =3):
     In a real-world scenario, this would involve making an API call to the LLM service.
     """
     final_result = []
-    os.chdir('/bigdisk/cuongvd17/Testing/kaggle/NLP_MAP')
+    os.chdir('E:/LLM/MAP/NLP_MAP')
     prompt = open('prompt/teacher_COT.txt', 'r').read().format(question = example['QuestionText'], answer = example['MC_Answer'], explain = example['StudentExplanation'], label = example['text_label'])
     print(prompt)
     message = [
@@ -50,11 +51,11 @@ def get_response(model, example,epoch =3):
         },
         {"role": "user", "content": prompt}
         ]
-    list_model = ['deepseek-v3-0324', 'gpt-4.1-nano']
+    list_model = ['gpt-4.1-nano']
     for _ in range(epoch):
         idx = np.random.randint(0, len(list_model))
         responses = model.chat.completions.create(
-            model = 'deepseek-v3-0324',
+            model = 'gpt-4.1-nano',
             messages = message,
             max_tokens = 256, 
             )
@@ -76,7 +77,7 @@ async def get_score(
     for idx, response in enumerate(responses):
         user_response+= f'\n<trajectory id= "{idx}"\n{response}\n</tranjectory>\n"'
     responses = model.chat.completions.parse(
-        model = 'deepseek-v3-0324',
+        model = 'gpt-4.1-nano',
         messages = [
             {'role': "system", "content": system_prompt},
             {'role': "user", "content": user_response}
@@ -90,6 +91,19 @@ async def get_score(
     
     
 if __name__ == '__main__':
-    responses = get_response(model, example)
-    scores = asyncio.run(get_score(responses,addition_prompt, model))
-    print(scores)
+    model = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY'), base_url="https://llm-prof-tien.thaiminhpv.id.vn")
+    print(os.getenv('OPENAI_API_KEY'))
+    print(os.getenv("OPENAI_BASE_URL"))
+    sampled = dataset.shuffle(seed=42).select(range(10))
+    prompts = []
+    scores = []
+    for example in sampled:
+
+        responses = get_response(model, example)
+        score = asyncio.run(get_score(responses,addition_prompt, model))
+        prompts.append(responses)
+        scores.append(score)
+
+    results = [{"prompts": p, "score": s} for p, s in zip(prompts, scores)]
+    with open("results.json", "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)

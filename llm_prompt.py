@@ -31,7 +31,7 @@ model_LLM = "gpt-4.1-nano"
 api_key = os.getenv("API_KEY_LLM")
 api_endpoint = "llm-prof-tien.thaiminhpv.id.vn"
 
-def get_response_2(prompt_content, temperature=0.7, top_p=0.8, max_tokens=512):
+def get_response_2(sp, prompt_content, temperature=0.7, top_p=0.8, max_tokens=512):
     client = OpenAI(
     base_url="https://router.huggingface.co/v1",
     api_key=os.environ["HF_TOKEN"],
@@ -39,6 +39,9 @@ def get_response_2(prompt_content, temperature=0.7, top_p=0.8, max_tokens=512):
     completion = client.chat.completions.create(
     model="openai/gpt-oss-120b",
     messages=[
+        {   "role": "system", 
+            "content": sp
+        },
         {
             "role": "user",
             "content": prompt_content
@@ -52,11 +55,12 @@ def get_response_2(prompt_content, temperature=0.7, top_p=0.8, max_tokens=512):
 
 
 
-def get_response(prompt_content, temperature=0.7, top_p=0.8, max_tokens=512):
+def get_response(sp, prompt_content, temperature=0.7, top_p=0.8, max_tokens=512):
     payload_explanation = json.dumps(
         {
             "model": model_LLM,
             "messages": [
+                {"role": "system", "content": sp},
                 {"role": "user", "content": prompt_content}
             ],
             "temperature": temperature,
@@ -126,7 +130,7 @@ def get_response(prompt_content, temperature=0.7, top_p=0.8, max_tokens=512):
 # sampling_params = SamplingParams(temperature=0.7, top_p=0.8, repetition_penalty=1.0, max_tokens=384)
 
 prompts = []
-
+sps = []
 for example in ds:
     question = example["QuestionText"]
     student_answer = example["MC_Answer"]
@@ -161,7 +165,8 @@ for example in ds:
 
         Keep your entire answer under 512 words.
     """
-    text = f"{sp}\n\nQuery: {user_message}\nAnswer:\n"
+    text = f"Query: {user_message}\nAnswer:\n"
+    sps.append(sp)
     prompts.append(text)
 
 
@@ -174,7 +179,7 @@ with torch.inference_mode():
     for i in range(0, len(ds), chunk_size):
         batch_prompts = prompts[i:i + chunk_size]
         batch_question_id = question_id[i:i + chunk_size]
-
+        batch_sp = sps[i: i + chunk_size]
         # inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
 
         # outputs = model.generate(
@@ -190,11 +195,12 @@ with torch.inference_mode():
         result = []
         generated_texts = []
         all_prompts = []
-        for p in batch_prompts:
-            generation_text = get_response_2(p, max_tokens=1024)
-            all_prompts.append(p)
+        for batch_sp, p in zip(batch_sp, batch_prompts):
+            generation_text = get_response_2(batch_sp, p, max_tokens=1024)
+            all_p = batch_sp + p
+            all_prompts.append(all_p)
             generated_texts.append(generation_text)
-            full_texts = f"{p}{generation_text}"
+            full_texts = f"{all_p}{generation_text}"
             result.append(full_texts)  
         # for j in range(len(batch_prompts)):
         #     input_len = inputs["input_ids"][j].shape[0]

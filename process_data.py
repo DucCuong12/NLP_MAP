@@ -1,5 +1,12 @@
 from sklearn.preprocessing import LabelEncoder
 import pandas as pd
+import random
+import json
+
+def add_special_tokens(label):
+    return f"[CLS] {label} [SEP]"
+
+
 def extract_answer(df, question_id):
     return df.loc[df.QuestionId == question_id].MC_Answer.unique().tolist()
 
@@ -38,3 +45,41 @@ def prepare_data(example):
         'miss': example['Misconception'],
         'is_correct': example['is_correct']
     }
+
+
+def create_data_and_save(df, num_negative=15, out_file="formatted_data.json"):
+    labels = sorted(df['text_label'].unique().tolist())
+    labels_with_tokens = [add_special_tokens(label) for label in labels]
+    data = []
+    for _, row in df.iterrows():
+        question_text = row['text_train']
+        positive_label_no_tokens = row['text_label']
+        positive_label_with_tokens = add_special_tokens(positive_label_no_tokens)
+
+        negative_candidates = [l for l in labels_with_tokens if l != positive_label_with_tokens]
+        negative_labels = random.sample(negative_candidates, min(num_negative, len(negative_candidates)))
+
+        data.append({
+            "question": question_text,
+            "positive_labels_id": labels_with_tokens.index(positive_label_with_tokens),
+            "negative_labels_id": [labels_with_tokens.index(nl) for nl in negative_labels]
+        })
+
+    output = {
+        "data": data,
+        "labels": labels_with_tokens
+    }
+    with open(out_file, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+    print(f"Saved formatted data with {len(data)} entries and {len(labels_with_tokens)} labels to {out_file}")
+
+
+# Sử dụng
+df = prepare_df('train.csv')
+print(df.head())
+create_data_and_save(df, num_negative=15)
+# print
+# Kiểm tra
+# for i in range(min(3, len(data))):
+#     print(data[i])
+# print("Labels:", labels)
