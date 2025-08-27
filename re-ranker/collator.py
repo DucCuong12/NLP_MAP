@@ -1,50 +1,26 @@
-import transformers
 from typing import Any, Dict, List
 from transformers import AutoTokenizer,DataCollatorWithPadding
 from dataclasses import dataclass
-from tokenization import TokenizeData
-import numpy as np
+
+import torch
 
 
 @dataclass
 class RankerDataCollator(DataCollatorWithPadding):
     tokenizer: AutoTokenizer
-    negative_dataset : Any
     
-    def __call__(self, features: List[Dict[str, any]]) -> Dict[str, any]:
-        batch_size = len(features)
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        labels = [feature['label'] for feature in features]
+        clean_features = []
+        for feature in features:
+            clean = {k: v for k, v in feature.items() if k not in ['row_id','label']}
+            clean_features.append(clean)
         
-        if batch_size <= 1:
-            features = {k:v for k,v in feature.items() if k != 'row_id'}
-            return self.tokenizer.pad(features, padding=True, return_tensors="pt")
-
         
-        
-        positive_features = list(features)
-        negative_indices = []
-        
-        for feature in positive_features:
-            idx = feature["row_id"]
-            offset= idx*73
-            negative_list = np.random.choice(range(offset+1,offset+73),size=batch_size,replace=False)
-            negative_list = list(negative_list)
-            negative_indices += negative_list
-    
-        
-        # negative_indices = [(i + np.random.randint(1, batch_size)) % batch_size for i in range(batch_size)]
-        negative_features = [self.negative_dataset[i] for i in negative_indices]
-        
-        all_features = positive_features + negative_features
-        final_features = []
-
-        for feature in all_features:
-            clean = {k:v for k,v in feature.items() if k != 'row_id'}
-            final_features.append(clean)
-
-        
-        padded_batch = self.tokenizer.pad(
-            final_features,
+        clean_features = self.tokenizer.pad(
+            clean_features,
             padding=True,
             return_tensors="pt",
         )
-        return padded_batch
+        clean_features['label']=torch.tensor(labels,dtype=torch.long)
+        return clean_features
