@@ -37,9 +37,58 @@ def tok(row):
 dataset = dataset.map(tok, batched=True, remove_columns=[col for col in dataset.column_names if col not in ['text_label', 'label']])
 
 
+
+def collate_fn(batch):
+    input_ids = torch.stack([item["input_ids"] for item in batch])
+    attention_mask = torch.stack([item["attention_mask"] for item in batch])
+    token_type_ids = torch.stack([item["token_type_ids"] for item in batch])
+    labels = [item["text_label"].replace(':', '_').split("_") for item in batch]
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "token_type_ids": token_type_ids,
+        "labels": labels
+    }
+
 dataset.set_format(type="torch")  # hoặc dataset = dataset.with_format("torch")
 ######## Training ##############
-train_dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=16, pin_memory=True, drop_last=True)
+train_dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=16, pin_memory=True, drop_last=True, collate_fn=collate_fn)
+
+
+def similarity(label_i, label_j):
+    if label_i == label_j:
+        return 1.0
+    elif label_i[0] == label_j[0]:
+        return 0.6
+    elif label_i[1] == label_j[1]:
+        return 0.2
+    else:
+        return 0
+
+def build_mask(labels):
+    batch = len(labels)
+    mask = torch.zeros((batch, batch), dtype=torch.float32, device="cuda")
+
+    for i in range(batch):
+        for j in range(batch):
+            sim = similarity(labels[i], labels[j])
+            mask[i][j] = sim
+    
+    return mask
+
+def contrastive_loss_2(outputs, labels, temperature = 0.09):
+    mask = build_mask(labels)
+    embed = F.normalize(outputs, dim=1)
+    similarity_matrix  = torch.matmul(embed, embed.T) / temperature  
+
+    exp_sim = torch.exp(similarity_matrix) * (~torch.eye(similarity_matrix.shape[0], device=similarity_matrix.device).bool())
+    similarity_mat = (similarity_matrix - torch.log(exp_sim.sum(dim=1, keepdim=True) + 1e-8)) * mask
+    mean_log = (similarity_mat.sum(dim=1) / (mask.sum(dim=1) + 1e-8))
+    return -mean_log.mean()
+
+
+
+
 
 def contrastive_loss(outputs, labels,temperature = 0.09):
     # Compute the contrastive loss between the outputs and labels
@@ -72,11 +121,12 @@ def fine_tune(model, train_dataloader, epochs = 3):
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             token_type_ids = batch['token_type_ids'].to(device)
-            labels = batch['label'].contiguous().view(-1, 1).to(device)
+            # labels = batch['label'].contiguous().view(-1, 1).to(device)
+            labels = batch["labels"]
             with autocast('cuda'):
                 outputs = model(input_ids, attention_mask, token_type_ids)
                 outputs = outputs.last_hidden_state[:,0,:]
-                loss = contrastive_loss(outputs, labels)
+                loss = contrastive_loss_2(outputs, labels)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
