@@ -1,15 +1,9 @@
 import torch
-import argparse
-import gc
 import os
-import random
 import pandas as pd
 from datasets import Dataset
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from dotenv import load_dotenv
-import json
-import http
-import time
+from transformers import pipeline,AutoTokenizer
+from tqdm import tqdm
 from openai import OpenAI
 
 label = "HIDDEN"
