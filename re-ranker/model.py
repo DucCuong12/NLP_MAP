@@ -1,62 +1,61 @@
-from transformers import Trainer, AutoModelForCausalLM ,AutoTokenizer
+from transformers import Trainer, AutoModelForCausalLM, AutoTokenizer
 import torch.nn as nn 
 import torch
 
 class CrossEntropyTrainer(Trainer):
-    def __init__(self, *args, yes_token_id, no_token_id,decode_steps, **kwargs):
+    def __init__(self, *args, yes_g_token_id, no_g_token_id, yes_token_id, no_token_id, tokenizer, decode_steps=5, **kwargs):
         super().__init__(*args, **kwargs)
         self.yes_token_id = yes_token_id
         self.no_token_id = no_token_id
+        self.decode_steps = decode_steps
+        self.tokenizer = tokenizer
+        self.yes_g_token_id = yes_g_token_id
+        self.no_g_token_id = no_g_token_id
         self.loss_fct = nn.CrossEntropyLoss()
     
-    # override
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        labels = inputs.pop("labels")
+        
         outputs = model(**inputs)
-        logits = outputs.logits
-
-        last_token_logits = logits[:, -1, :]
-
-        # yes_scores = last_token_logits[:, self.yes_token_id]
-        # no_scores = last_token_logits[:, self.no_token_id]
-        # scores = yes_scores - no_scores
-
+        logits = outputs.logits  
         
-        num_positives = self.args.per_device_train_batch_size
-        num_negatives = num_positives * num_positives
-        expected_total_size = num_positives + num_negatives
-
-        if last_token_logits.shape[0] != expected_total_size:
-            print(f"Batch size không khớp! Got {last_token_logits.shape[0]}, expected {expected_total_size}. Skipping loss calculation for this batch.")
-            #khong hoc / update weight
-            return torch.tensor(0.0, device=model.device, requires_grad=True)
+        last_token_logits = logits[:, -1, :]  
         
-        positive_labels = torch.full((num_positives,), self.yes_token_id, dtype=torch.long, device=model.device)
-        negative_labels = torch.full((num_negatives,), self.no_token_id, dtype=torch.long, device=model.device)
-        labels = torch.cat([positive_labels, negative_labels])
-
-
-
-        if decode_steps < 5:
+        yes_logits = torch.max(
+            last_token_logits[:, self.yes_token_id],
+            last_token_logits[:, self.yes_g_token_id]
+        )
+        no_logits = torch.max(
+            last_token_logits[:, self.no_token_id],
+            last_token_logits[:, self.no_g_token_id]
+        )
+        # theo chieu doc --> gom 2 tensor list : 1 toan no, 1 toan yes
+        binary_logits = torch.stack([no_logits, yes_logits], dim=1)
+        
+        # 1 ="Yes" /" Yes" ; 0 = "No" / " No"
+        binary_labels = (labels == 1).long()
+        
+        if self.decode_steps < 3:
             with torch.no_grad():
-                gen = model.generate(
-                    **{k: v for k, v in inputs.items() if k in ("input_ids", "attention_mask")},
-                    max_new_tokens=5000,
-                    temperature=0.7,
-                    top_p=0.9,
-                    repetition_penalty=1.05,
+                debug_outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=50,
+                    pad_token_id=self.tokenizer.eos_token_id,
                     do_sample=True,
-                    return_dict_in_generate=False
+                    temperature=0.7
                 )
-                decoded_inp = self.tokenizer.decode(inputs["input_ids"][0], skip_special_tokens=False)
-                decoded_gen = self.tokenizer.decode(gen[0], skip_special_tokens=False)
-                print("================= DEBUG=================")
-                print(f"--- INPUT ---:\n{decoded_inp}")
-                print(f"--- Response ---:\n{decoded_gen}")
-                print("============================================")
-            decode_steps+=1
-
-
-
-        #ce loss
-        loss = self.loss_fct(last_token_logits, labels)
+                for i, seq in enumerate(debug_outputs):
+                    decoded = self.tokenizer.decode(seq, skip_special_tokens=True)
+                    print(f"Batch {i} generated: {decoded}") 
+            
+            print(f"--- Labels: {labels} ---")
+            print(f"--- Max Yes Logits: {yes_logits} ---")
+            print(f"--- Max No Logits: {no_logits} ---")
+            self.decode_steps += 1
+        
+        loss = self.loss_fct(binary_logits, binary_labels)
+        
+        inputs["labels"] = labels
+        
         return (loss, outputs) if return_outputs else loss
+

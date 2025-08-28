@@ -59,16 +59,16 @@ def similarity(label_i, label_j):
         return 1.0
     elif label_i[0] == label_j[0]:
         if label_i[1] == label_j[1]:
-            return 0.6
+            return 0.7
         else:
-            return 0.35
+            return 0.4
     elif label_i[1] == label_j[1]:
         if label_i[2] == label_j[2]:
-            return 0.2
+            return 0.3
         else:
-            return 0.15
-    elif label_i[2] == label_j[2]:
-        return 0.1
+            return 0.1
+    # elif label_i[2] == label_j[2]:
+    #     return 0.1
     else:
         return 0
 

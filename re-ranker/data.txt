@@ -1,0 +1,19 @@
+//data + model ở link sau:
+https://drive.google.com/drive/folders/1gZYMytHg_EPa_yCiT-yyLnLC3TnRCWox?hl=vi
+
+
+//24 /8 /2025
+1. chọn batchsize bao nhiêu là hợp lí khi train ?
+2. có nên dùng vllm để tăng tốc hay không ?
+
+// 25/8/2025
+1. 
+2.Nên lưu response của CoT trước khi train hay chạy model CoT trong vòng train ?
+
+// 26/8/2025
+1. Nên tự cài lại model.generate(**input) cho cross-entropy model hay không (do method này bị chứa sẵn trong torch.no_grad()) ?
+2. 
+
+// 27/8/2025
+1. Thay model.generate(**input) bằng model(**input) --> như vậy output cuối chỉ tính đúng "Yes"/"No", không generate response gì nữa
+2. Sửa lại collator.py và tokenization.py
