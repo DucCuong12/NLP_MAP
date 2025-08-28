@@ -59,19 +59,28 @@ def similarity(label_i, label_j):
     if label_i == label_j:
         return 1.0
     elif label_i[0] == label_j[0]:
-        return 0.6
+        if label_i[1] == label_j[1]:
+            return 0.65
+        else:
+            return 0.5
     elif label_i[1] == label_j[1]:
-        return 0.2
+        if label_i[2] == label_j[2]:
+            return 0.2
+        else:
+            return 0.1
     else:
         return 0
 
 def build_mask(labels):
     batch = len(labels)
-    mask = torch.zeros((batch, batch), dtype=torch.float32, device="cuda")
+    mask = torch.zeros((batch, batch), dtype=torch.float32, device="cpu")
 
     for i in range(batch):
         for j in range(batch):
-            sim = similarity(labels[i], labels[j])
+            if j != i:
+                sim = similarity(labels[i], labels[j])
+            else:
+                sim = 0
             mask[i][j] = sim
     
     return mask
