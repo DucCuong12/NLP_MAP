@@ -18,13 +18,15 @@ class TokenizeData :
             range(len(df['StudentExplanation']))
 
         ):
-            
+            parts = category.split("_")
+            correctness = parts[0]
+            reasoning_type = parts[1]
+
             prompt = f"""
 <|im_start|>system
-You are a meticulous educational analyst and expert in mathematics pedagogy. Your task is to perform a verification check. You will be given a student's response to a math problem, and a proposed classification for that response. You must determine if the proposed classification is entirely accurate based on the evidence.
+You are a meticulous educational analyst and expert in mathematics pedagogy. Your task is to perform a verification check. You will be given a student's response to a math problem , then a THOUGHT ANALYSIS and a proposed classification for that response. You must determine if the proposed classification is entirely accurate based on the your knowledge and problem data. Note that the THOUGHT ANALYSIS may be sometimes not correct.
 
 DEFINITIONS OF THE CLASSIFICATION LABELS:
-Part 0: Category: This is a compound label with two parts, separated by an underscore: Correctness_ReasoningType.
 
 Part 1: Correctness (True or False): This describes whether the student's answer is objectively the correct solution to the Question Text.
 
@@ -33,15 +35,14 @@ Correct: The explanation shows sound, logical, and mathematically valid reasonin
 Misconception: The explanation reveals a specific, identifiable error in conceptual understanding.
 Neither: The explanation is incorrect, but does not point to a specific misconception. It could be a guess, irrelevant, or simply nonsensical.
 
-Part 3: Misconception : This is a text description of the specific thinking error. It is only relevant when the ReasoningType in the category is Misconception. If the category is ..._Correct or ..._Neither, this field's value should be "NA"
-
+Part 3: Misconception : This is a text description of the specific thinking error. It is only relevant when the ReasoningType is Misconception. If the ReasoningType is Correct or Neither, this field's value should be "NA".
 
 YOUR TASK:
 
-1. Compare the THOUGHT ANALYSIS to the Category and Misconception in PROPOSED CLASSIFICATION based on PROBLEM DATA, then consider the following 3 questions :
-1.1 From the THOUGHT ANALYSIS and your analysis, does the True/False conclusion of student's answer match the first part of the "Category" label?
-1.2 Does the Correct/Misconception/Neither conclusion match the second part of the "Category" label?
-1.3 If the category is ..._Misconception, does the student's error align with the provided "Misconception" text? (If the "Category" in PROPOSED CLASSIFICATION is ..._Correct or ..._Neither, you can skip this step) 
+1. Compare the THOUGHT ANALYSIS to the Correctness,ReasoningType and Misconception in PROPOSED CLASSIFICATION based on PROBLEM DATA, then consider the following 3 questions :
+1.1 From the THOUGHT ANALYSIS and your analysis, does the true "True/False" conclusion of student's answer match the Correctness value in PROPOSED CLASSIFICATION?
+1.2 Does the true "Correct/Misconception/Neither" conclusion match the ReasoningType value in PROPOSED CLASSIFICATION?
+1.3 If the ReasoningType value in PROPOSED CLASSIFICATION  is "Misconception", does the student's error align with the provided Misconception" text? (If the "ReasoningType" value in PROPOSED CLASSIFICATION is Correct or Neither, you can skip this step) 
 2. Final Conclusion: A "Yes" is only possible if all checks in Step 1 pass. If there is any mismatch at any point, the answer must be "No".
 
 **CONSTRAINT:
@@ -56,7 +57,8 @@ Student's Answer: {mc_answer}
 Student's Explanation: {explanation}
 
 PROPOSED CLASSIFICATION:
-Category: '{category}'
+Correctness: '{correctness}'
+ReasoningType: '{reasoning_type}'
 Misconception: '{misconception}'
 
 THOUGHT ANALYSIS:
