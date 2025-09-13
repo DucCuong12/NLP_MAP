@@ -14,7 +14,7 @@ import ast
 import torch
 import torch.nn as nn
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel
 from datasets import Dataset
 import ast
 import torch.nn.functional as F
@@ -31,9 +31,12 @@ from transformers import (
     DataCollatorWithPadding
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-# import numpy as np
 
-k=3
+from torch.utils.data import DataLoader
+import argparse
+from process_data import prepare_df
+from fine_tune1 import infer,save_embeddings_to_csv
+from copy import deepcopy
 
 def prepare_df1(path):
     # path = args.path
@@ -44,7 +47,7 @@ def prepare_df1(path):
     )
     return df
 
-def retrieve(test_row,tokenizer,model):
+def retrieve(test_row,tokenizer,model,num_of_top_result):
     text = test_row['text_train']
     tokenized_text= tokenizer(
                         text,
@@ -66,15 +69,17 @@ def retrieve(test_row,tokenizer,model):
     
     seen_labels = set()
     top_results = []
+    top_results_score = []
     for idx in sorted_idx.tolist():
         lbl = infer_labels[idx]
         if lbl not in seen_labels:
             score = sims[idx].item()
             top_results.append(lbl)
+            top_results_score.append(score)
             seen_labels.add(lbl)
-        if len(top_results) == 10:
+        if len(top_results) == num_of_top_result or len(top_results_score) == num_of_top_result:
             break
-    return top_results
+    return top_results,top_results_score
 
 def tokenize_input_for_cot(row,tokenizer) :
     
@@ -191,24 +196,20 @@ THOUGHT ANALYSIS:
     
     return tokenized_output.to(device)
 
-def generate_cot(row,tokenizer_cot) :
+def generate_cot(row,tokenizer_cot,model_cot) :
     inputs = None
-    outputs = None
     with torch.no_grad():
         inputs = tokenize_input_for_cot(row,tokenizer_cot)
         generated_outputs = model_cot.generate(
             **inputs,
-            max_new_tokens=2048,
-            pad_token_id=tokenizer.eos_token_id
+            max_new_tokens=512,
+            pad_token_id=tokenizer_cot.eos_token_id
         )
     response=""
 
     #them vao skip_special_tokens=True
-    for i in range(inputs["input_ids"].shape[1], generated_outputs.shape[1]):
-        token_id = generated_outputs[0, i]
-        decoded_token = str(tokenizer.decode(token_id))
-        response += decoded_token
-    return response
+    start = inputs["input_ids"].shape[1]
+    return tokenizer_cot.decode(gen[0, start:], skip_special_tokens=True)
 
 def infer(row,category,misconception,tokenizer,thought,decode_steps):
     inputs = None
@@ -236,45 +237,103 @@ def infer(row,category,misconception,tokenizer,thought,decode_steps):
     decode_steps+=1
     result = str(category+":"+misconception)
     return scores , result , decode_steps
+
+def softmax(x):
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum()
+
+def ensemble(retrieve_scores,re_rank_scores,alpha,beta):
+    retrieve_scores = np.array(retrieve_scores)
+    re_rank_scores = np.array(re_rank_scores)
+    retrieve_softmax = softmax(retrieve_scores)
+    re_rank_softmax = softmax(re_rank_scores)
     
-def predict(dataset,decode_steps):
+    combined = alpha * retrieve_softmax + beta * re_rank_softmax
+    
+    indices_sorted = np.argsort(-combined) 
+    combined_scores_sorted = combined[indices_sorted]
+    return indices_sorted.tolist(), combined_scores_sorted.tolist()
+
+def predict(dataset,decode_steps,num_of_top_retrieve_result,num_of_top_final_result,alpha,beta):
     count = 0
     for row in dataset :
-        print(f"--This is the {count} test---")
-        candidate_labels = retrieve(row,tokenizer_retrieve,model_retrieve)
-        ranking_candidate = {}
+        if count < 3:
+            print(f"--This is the {count} test---")
+        candidate_labels,candidate_labels_scores = retrieve(row,tokenizer_retrieve,model_retrieve,num_of_top_retrieve_result)
+        ranking_scores = []
+        thought = generate_cot(row,tokenizer_cot)
+        # can tang toc cho nay, nhet vao thanh nhieu size kieu gi ?
         for label in candidate_labels :
             category,misconception = None,None
             parts = label.split(":")
             category = str(parts[0])
             misconception = str(parts[1])
-                
-            thought = generate_cot(row,tokenizer_cot)
             score , result , decode_steps = infer(row,category,misconception,tokenizer,thought,decode_steps)
-            ranking_candidate[result] = score
+            ranking_scores.append(score)
                 
-        sorted_candidate_desc = sorted(ranking_candidate.items(), key=lambda x: x[1], reverse=True)
-        top_3_candidates = sorted_candidate_desc[:3]
-        top_3_keys = [k for k, v in top_3_candidates]
-        row['Category:Misconception'] = str(top_3_keys[0]+" "+top_3_keys[1]+" "+top_3_keys[2])
+        sorted_candidate_desc,_ = ensemble(candidate_labels_scores,ranking_scores,alpha,beta)
+        top_k_candidates = sorted_candidate_desc[:num_of_top_final_result]
+        top_k_keys = [candidate_labels[k] for k in top_k_candidates]
+        hehe = ""
+        for idx, key in enumerate(top_k_keys):
+            if idx < len(top_k_keys)-1 :
+                hehe += str(key+" ")
+            else:
+                hehe += str(key)
+        row['Category:Misconception'] = hehe
         for column_name in remove_columns :
             row.pop(column_name,None)
         if count < 3 :
             print(row)
         count+=1
 
-def cal_map_k(k,data_df,correct_df):
+def cal_map_k(k,test_df,correct_df):
     sum = 0
     count = 0
-    for idx, row in data_df.iterrows() :
-        for i in range(k):
-            if row["Category"] == correct_df.loc[idx]["Category"] and row["Misconception"] == data_df.loc[idx] :
-                sum +=  (k-i)/k
-                break
+    for idx, row in test_df.iterrows() :
         count +=1
-    sum = sum/count
+        candidate_labels = row["Category:Misconception"].split(" ")
+        for i,label in enumerate(candidate_labels):
+            if i >= k:
+                break
+            if label == correct_df.loc[idx,"Category:Misconception"]:
+                sum += float(1/(i+1))
+                break
+
+    sum = float(sum/count)
+    return sum
 
 if __name__ == "__main__":
+
+    # MAP@K , K = 1,2,3,4,5... ; num_of_retrieve ; alpha , beta for ensembling
+    k=3
+    alpha = 0.3
+    beta = 0.7
+    num_of_top_retrieve_result = 10
+
+    #quantization
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16 
+    )
+
+
+    #finetuned model : cot , re-rank
+    #cot model
+    MODEL_COT =""
+    #re-ranker model
+    MODEL_PATH= ""
+
+    #pretrained model : 2 con Qwen3 8B , hoac co the dung chung 1 model Qwen3 8B
+    PRETRAINED_RE_RANKER_MODEL = ""
+    PRETRAINED_COT_MODEL = ""
+
+    decode_steps=0
+
+    
+    # Config lai ten model / model path / data path
+    ##Load retrieval model
     
     state_dict = torch.load("best_model_proposed_110.pth", map_location="cuda")
     model_retrieve_path = 'mathbert_model/transformers/default/1'
@@ -295,24 +354,54 @@ if __name__ == "__main__":
     infer_embeds = F.normalize(infer_embeds, dim=1).to(device)
     infer_labels = infer_data['label']
 
-    MODEL_PATH= "qwen-3/transformers/8b/1"
-    # TRAIN_CSV_PATH = "/train_with_misconceptions.csv" 
 
-    MODEL_COT ="qwen-3/transformers/1.7b/1"
+    ####### Load dataset for evaluation #########
+    def tok(row):
+        text = row['text_train']
+        return tokenizer_retrieve(text, truncation=True, padding='max_length', max_length=512)
+    def collate_fn(batch):
+        input_ids = torch.stack([item["input_ids"] for item in batch])
+        attention_mask = torch.stack([item["attention_mask"] for item in batch])
+        token_type_ids = torch.stack([item["token_type_ids"] for item in batch])
+        labels = torch.stack([item["label"] for item in batch])
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "token_type_ids": token_type_ids,
+            "labels": labels
+        }
 
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16 
-    )
+    data_path = 'test_split.csv'
+    df = prepare_df(data_path)
+    dataset = Dataset.from_pandas(df)
+    temp_dataset= dataset
+    dataset = dataset.map(tok, batch= True, remove_columns=[col for col in dataset.column_names if col != 'label'])
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_PATH, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
-    )
+    dataset.set_format(type="torch")
+    infer_dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=4, pin_memory=True, drop_last=True, collate_fn=collate_fn)
 
+    print(len(infer_dataloader))
+
+    ######## INFER for our proposed model retrieval + cot + reranker #########
+
+
+    # ######## INFER for Retrieval model #########
+    # model_name = 'tbs17/MathBERT'
+    # model_retrieval_path =""
+    # model_retrieval = AutoModel.from_pretrained(model_name)
+    # tokenizer_retrieval = AutoTokenizer.from_pretrained(model_name)
+
+    # model_retrieval = torch.nn.DataParallel(model_retrieval, device_ids=list(range(torch.cuda.device_count())))
+
+    # state_dict = torch.load('checkpoints/best_model_proposed_110.pth')
+    # model_retrieval.load_state_dict(state_dict) 
+
+    # result = infer(model_retrieval, infer_dataloader)
+    # save_embeddings_to_csv(result, 'embeddings_retrieval_test_split.csv')
+    
+    ####### INFER for Re-ranker model #########
+
+    #Load CoT Model
     tokenizer_cot = AutoTokenizer.from_pretrained(MODEL_COT)
     if tokenizer_cot.pad_token is None:
         tokenizer_cot.pad_token = tokenizer_cot.eos_token
@@ -320,20 +409,43 @@ if __name__ == "__main__":
     MODEL_COT, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
     )
 
-    yes_token_id = tokenizer.encode("Yes", add_special_tokens=False)[0]
-    no_token_id = tokenizer.encode("No", add_special_tokens=False)[0]
+    #Load Re-ranker Model
+    tokenizer_re_rank = AutoTokenizer.from_pretrained(MODEL_PATH)
+    if tokenizer_re_rank.pad_token is None:
+        tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
+    
+    model_re_rank = AutoModelForCausalLM.from_pretrained(
+        MODEL_PATH, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
+    )
 
-    yes_g_token_id = tokenizer.encode(" Yes",add_special_tokens=False)[0]
-    no_g_token_id = tokenizer.encode(" No", add_special_tokens=False)[0]
+    #yes,no id
+    yes_token_id = tokenizer_re_rank.encode("Yes", add_special_tokens=False)[0]
+    no_token_id = tokenizer_re_rank.encode("No", add_special_tokens=False)[0]
 
-    decode_steps=0
+    yes_g_token_id = tokenizer_re_rank.encode(" Yes",add_special_tokens=False)[0]
+    no_g_token_id = tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
 
-    remove_columns = ["QuestionId","QuestionText","MC_Answer","StudentExplanation"]
+    #infer
+    
 
-    test_dataset= predict(test_dataset,decode_steps=decode_steps)
-    submit_df = pd.DataFrame(test_dataset)
 
-    correct_df = "valid_df"
-    correct_dataset = Dataset.from_pandas(correct_df)
-    map_k_score = cal_map_k(k,test_dataset, correct_dataset)
-    print(map_k_score)
+####### INFER for Re-ranker without fine-tune CoT  #########
+    decode_steps = 0
+    pre_tokenizer_cot = AutoTokenizer.from_pretrained(PRETRAINED_COT_MODEL)
+    if pre_tokenizer_cot.pad_token is None:
+        pre_tokenizer_cot.pad_token = tokenizer_cot.eos_token
+    pre_model_cot = AutoModelForCausalLM.from_pretrained(
+    PRETRAINED_COT_MODEL, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
+    )
+    #infer with pretrained cot and fine-tuned re-ranker
+
+####### INFER for Re-ranker without fine-tune Yes/No  #########
+    decode_steps = 0
+    pre_tokenizer_re_rank = AutoTokenizer.from_pretrained(PRETRAINED_RE_RANKER_MODEL)
+    if pre_tokenizer_re_rank.pad_token is None:
+        pre_tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
+    
+    pre_model_re_rank = AutoModelForCausalLM.from_pretrained(
+        PRETRAINED_RE_RANKER_MODEL, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
+    )
+    #infer with fine-tuned cot and pretrained re-ranker
