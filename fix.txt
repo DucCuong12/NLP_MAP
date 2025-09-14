@@ -1,0 +1,8 @@
+1. fix retrieve --> from retrieving one column per time --> retrieving all df per time
+--> process each batch --> iterate through each row in each batch --> select candidates for each row
+2. fix def predict
+
+4. instead of running test to calculate MAP@K sequentially, using def args --> use bash to run test in different session
+
+
+5. return a list of all labels --> then use model reranking only on this 74 labels
