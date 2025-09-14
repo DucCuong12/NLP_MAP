@@ -40,33 +40,28 @@ from copy import deepcopy
 
 def prepare_df1(path):
     # path = args.path
-    df = pd.read_csv(path)
+    df = pd.read_csv(path,keep_default_na=False)
     df['text_train'] = df.apply(
     lambda row: f"[CLS] Question: {row['QuestionText']}\n[SEP] Student's Answer: {row['MC_Answer']}\n[SEP] Student's explanation: {row['StudentExplanation']}[SEP]\n ",
     axis=1
     )
     return df
 
-def retrieve(test_row,tokenizer,model,num_of_top_result):
+def retrieve(test_row, tokenizer, model, num_of_top_result, infer_embeds, infer_labels):
     text = test_row['text_train']
-    tokenized_text= tokenizer(
-                        text,
-                        truncation=True,
-                        padding='max_length',
-                        max_length=512,
-                        return_tensors="pt"
-                    )
-    tokenized_text = tokenized_text.to(device)
+    tokenized_text = tokenizer(
+        text,
+        truncation=True,
+        padding='max_length',
+        max_length=512,
+        return_tensors="pt"
+    ).to(device)
     with torch.no_grad():
         output = model(**tokenized_text)
-    query = output.last_hidden_state[:, 0, :]          
-    query = F.normalize(query, dim=1)                 
-        
-            
-    sims = torch.matmul(query, infer_embeds.T).squeeze(0)  
-    
+    query = output.last_hidden_state[:, 0, :]
+    query = F.normalize(query, dim=1)
+    sims = torch.matmul(query, infer_embeds.T).squeeze(0)
     sorted_idx = torch.argsort(sims, descending=True)
-    
     seen_labels = set()
     top_results = []
     top_results_score = []
@@ -77,9 +72,10 @@ def retrieve(test_row,tokenizer,model,num_of_top_result):
             top_results.append(lbl)
             top_results_score.append(score)
             seen_labels.add(lbl)
-        if len(top_results) == num_of_top_result or len(top_results_score) == num_of_top_result:
+        if len(top_results) == num_of_top_result:
             break
-    return top_results,top_results_score
+    return top_results, top_results_score
+    
 
 def tokenize_input_for_cot(row,tokenizer) :
     
@@ -209,34 +205,61 @@ def generate_cot(row,tokenizer_cot,model_cot) :
 
     #them vao skip_special_tokens=True
     start = inputs["input_ids"].shape[1]
-    return tokenizer_cot.decode(gen[0, start:], skip_special_tokens=True)
+    return tokenizer_cot.decode(generated_outputs[0, start:], skip_special_tokens=True)
 
-def infer(row,category,misconception,tokenizer,thought,decode_steps):
-    inputs = None
-    outputs = None
-    scores = -300
+def infer(
+    row,
+    batch_size,
+    labels,
+    tokenizer_re_ranker,
+    model_re_ranker,
+    thought,
+    decode_steps,
+    yes_token_id,
+    yes_g_token_id,
+    no_token_id,
+    no_g_token_id,
+    sub_batch_size=7  # Add this argument
+):
+    categories, misconceptions = labels
+    assert len(categories) == batch_size and len(misconceptions) == batch_size
 
-    print(f"---{decode_steps} turn.---")
-    inputs = tokenize_input(row,category,misconception,tokenizer,thought)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    logits = outputs.logits      
-    last_token_logits = logits[:, -1, :]  
-    yes_logits = torch.max(
+    all_scores = []
+    n = batch_size
+    for start in range(0, n, sub_batch_size):
+        end = min(start + sub_batch_size, n)
+        input_dicts = []
+        for i in range(start, end):
+            input_dict = tokenize_input(row, categories[i], misconceptions[i], tokenizer_re_ranker, thought)
+            input_dicts.append(input_dict)
+        
+        batch = {}
+        for key in input_dicts[0]:
+            batch[key] = torch.cat([d[key] for d in input_dicts], dim=0).to(device)
+            
+        with torch.no_grad():
+            outputs = model_re_ranker(**batch)
+
+        logits = outputs.logits
+        last_token_logits = logits[:, -1, :]
+        yes_logits = torch.max(
             last_token_logits[:, yes_token_id],
             last_token_logits[:, yes_g_token_id]
         )
-    no_logits = torch.max(
-        last_token_logits[:, no_token_id],
-        last_token_logits[:, no_g_token_id]
-    )
-    scores = yes_logits - no_logits
-    print(f"---Scores calculated ---")
-    if decode_steps < 3:
-        print(f"--- Scores = {scores} ---")
-    decode_steps+=1
-    result = str(category+":"+misconception)
-    return scores , result , decode_steps
+        no_logits = torch.max(
+            last_token_logits[:, no_token_id],
+            last_token_logits[:, no_g_token_id]
+        )
+
+        scores = yes_logits - no_logits
+        all_scores.append(scores.cpu())
+        if decode_steps < 3:
+            print(f"--- Sub-batch {start}-{end} scores: {scores} ---")
+        decode_steps += 1
+
+    # Concatenate all sub-batch scores
+    all_scores = torch.cat(all_scores, dim=0).numpy()
+    return all_scores.tolist(), decode_steps
 
 def softmax(x):
     e_x = np.exp(x - np.max(x))
@@ -254,38 +277,90 @@ def ensemble(retrieve_scores,re_rank_scores,alpha,beta):
     combined_scores_sorted = combined[indices_sorted]
     return indices_sorted.tolist(), combined_scores_sorted.tolist()
 
-def predict(dataset,decode_steps,num_of_top_retrieve_result,num_of_top_final_result,alpha,beta):
-    count = 0
-    for row in dataset :
-        if count < 3:
-            print(f"--This is the {count} test---")
-        candidate_labels,candidate_labels_scores = retrieve(row,tokenizer_retrieve,model_retrieve,num_of_top_retrieve_result)
-        ranking_scores = []
-        thought = generate_cot(row,tokenizer_cot)
-        # can tang toc cho nay, nhet vao thanh nhieu size kieu gi ?
-        for label in candidate_labels :
-            category,misconception = None,None
+
+def predict(
+    dataset,
+    correct_df,
+    decode_steps,
+    num_of_top_retrieve_result,
+    num_of_top_final_result,
+    alpha,
+    beta,
+    tokenizer_retrieve,
+    model_retrieve,
+    infer_embeds,
+    infer_labels,
+    tokenizer_cot,
+    model_cot,
+    tokenizer_re_ranker,
+    model_re_ranker,
+    yes_token_id,
+    yes_g_token_id,
+    no_token_id,
+    no_g_token_id,
+    map_ks=None   # NEW: list of K values for MAP@K
+):
+    
+    #Returns map_scores: dict {K: MAP@K}
+    
+    if map_ks is None:
+        map_ks = [num_of_top_final_result]
+    max_needed_k = max(map_ks + [num_of_top_final_result])
+
+    predictions_per_row = []
+    U = len(dataset)
+
+    for idx, row in enumerate(dataset):
+        if idx < 3:
+            print(f"--This is the {idx} test---")
+
+        candidate_labels, candidate_labels_scores = retrieve(
+            row, tokenizer_retrieve, model_retrieve, num_of_top_retrieve_result, infer_embeds, infer_labels
+        )
+
+        thought = generate_cot(row, tokenizer_cot, model_cot)
+
+        categories = []
+        misconceptions = []
+        for label in candidate_labels:
             parts = label.split(":")
-            category = str(parts[0])
-            misconception = str(parts[1])
-            score , result , decode_steps = infer(row,category,misconception,tokenizer,thought,decode_steps)
-            ranking_scores.append(score)
-                
-        sorted_candidate_desc,_ = ensemble(candidate_labels_scores,ranking_scores,alpha,beta)
-        top_k_candidates = sorted_candidate_desc[:num_of_top_final_result]
-        top_k_keys = [candidate_labels[k] for k in top_k_candidates]
-        hehe = ""
-        for idx, key in enumerate(top_k_keys):
-            if idx < len(top_k_keys)-1 :
-                hehe += str(key+" ")
+            # safety
+            if len(parts) < 2:
+                categories.append(parts[0])
+                misconceptions.append("NA")
             else:
-                hehe += str(key)
-        row['Category:Misconception'] = hehe
-        for column_name in remove_columns :
-            row.pop(column_name,None)
-        if count < 3 :
-            print(row)
-        count+=1
+                categories.append(parts[0])
+                misconceptions.append(parts[1])
+        labels = (categories, misconceptions)
+        batch_size = len(candidate_labels)
+
+        ranking_scores, decode_steps = infer(
+            row,
+            batch_size,
+            labels,
+            tokenizer_re_ranker,
+            model_re_ranker,
+            thought,
+            decode_steps,
+            yes_token_id,
+            yes_g_token_id,
+            no_token_id,
+            no_g_token_id
+        )
+
+        sorted_candidate_desc, _ = ensemble(candidate_labels_scores, ranking_scores, alpha, beta)
+        ranked_labels_full = [candidate_labels[k] for k in sorted_candidate_desc[:max_needed_k]]
+        predictions_per_row.append(ranked_labels_full)
+
+        if idx < 3:
+            print("Top (debug):", ranked_labels_full[:num_of_top_final_result])
+
+    # MAP@K scores
+    map_scores = cal_map_ks(predictions_per_row, correct_df["Category:Misconception"], map_ks)
+
+    # print("MAP scores:", " ".join([f"K={k}:{map_scores[k]:.4f}" for k in map_ks]))
+
+    return map_scores
 
 def cal_map_k(k,test_df,correct_df):
     sum = 0
@@ -303,10 +378,45 @@ def cal_map_k(k,test_df,correct_df):
     sum = float(sum/count)
     return sum
 
-if __name__ == "__main__":
+def cal_map_ks(predictions_per_row, correct_labels, ks):
+   
+    # Normalize ks
+    if not ks:
+        return {}
 
+    if hasattr(correct_labels, "reset_index"):
+        correct_labels = correct_labels.reset_index(drop=True)
+    if hasattr(correct_labels, "tolist"):
+        correct_labels = correct_labels.tolist()
+    n = len(predictions_per_row)
+    if n == 0:
+        return {k: 0.0 for k in ks}
+
+    max_k = ks[-1]
+    sums = {k: 0.0 for k in ks}
+
+    for i in range(n):
+        preds = predictions_per_row[i]
+        true_label = correct_labels[i]
+        truncated = preds[:max_k]
+        match_rank = None
+        for r, lbl in enumerate(truncated):
+            if lbl == true_label:
+                match_rank = r
+                break
+        if match_rank is not None:
+            for k in ks:
+                if match_rank < k:
+                    sums[k] += 1.0 / (match_rank + 1)
+
+    return {k: (sums[k] / n) for k in ks}
+
+if __name__ == "__main__":
+    #hyperparameters
     # MAP@K , K = 1,2,3,4,5... ; num_of_retrieve ; alpha , beta for ensembling
-    k=3
+    #num_top_final_result = k
+    ks= [1,2,3,4,5,6,7,8,9,10]
+    num_of_top_final_result=10
     alpha = 0.3
     beta = 0.7
     num_of_top_retrieve_result = 10
@@ -342,9 +452,6 @@ if __name__ == "__main__":
     model_retrieve = AutoModel.from_pretrained(model_retrieve_path).to("cuda")
     model_retrieve = torch.nn.DataParallel(model_retrieve)
     model_retrieve.load_state_dict(state_dict)
-    
-    test= prepare_df1("test.csv")
-    test_dataset = Dataset.from_pandas(test)
 
     embedded_training_dataset_path = 'embeddings_test190.csv'
     infer_data = pd.read_csv(embedded_training_dataset_path)
@@ -356,6 +463,8 @@ if __name__ == "__main__":
 
 
     ####### Load dataset for evaluation #########
+
+    #chua biet 2 ham nay dung lam gi
     def tok(row):
         text = row['text_train']
         return tokenizer_retrieve(text, truncation=True, padding='max_length', max_length=512)
@@ -371,16 +480,34 @@ if __name__ == "__main__":
             "labels": labels
         }
 
+    #test_data
+    test= pd.read_csv("test.csv",keep_default_na=False)
+    test_dataset = Dataset.from_pandas(test)
+
+    #ground_truth 
     data_path = 'test_split.csv'
-    df = prepare_df(data_path)
-    dataset = Dataset.from_pandas(df)
-    temp_dataset= dataset
-    dataset = dataset.map(tok, batch= True, remove_columns=[col for col in dataset.column_names if col != 'label'])
+    df = pd.read_csv(data_path,keep_default_na=False)
+    correct_df = df[['Category', 'Misconception']].copy()
+    correct_df['Category'] = correct_df['Category'].astype(str).str.strip()
+    correct_df['Misconception'] = (
+        correct_df['Misconception']
+        .replace(['', ' ', None], 'NA')
+        .fillna('NA')
+        .astype(str)
+        .str.strip()
+    )
+    correct_df['Category:Misconception'] = (
+        correct_df['Category'] + ':' + correct_df['Misconception']
+    )
+    correct_df = correct_df.reset_index(drop=True)
 
-    dataset.set_format(type="torch")
-    infer_dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=4, pin_memory=True, drop_last=True, collate_fn=collate_fn)
-
-    print(len(infer_dataloader))
+    # dataset = Dataset.from_pandas(df)
+    # temp_dataset= dataset
+    # dataset = dataset.map(tok, batch= True, remove_columns=[col for col in dataset.column_names if col != 'label'])
+    # dataset.set_format(type="torch")
+    # infer_dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=4, pin_memory=True, drop_last=True, collate_fn=collate_fn)
+    # print(len(infer_dataloader))
+    
 
     ######## INFER for our proposed model retrieval + cot + reranker #########
 
@@ -426,8 +553,31 @@ if __name__ == "__main__":
     no_g_token_id = tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
 
     #infer
+    map_k_scores_proposed = predict(test_dataset,
+                           correct_df,
+                           decode_steps,
+                           num_of_top_retrieve_result,
+                           num_of_top_final_result,
+                           alpha,
+                           beta,
+                           tokenizer_retrieve,
+                           model_retrieve,
+                           infer_embeds,
+                           infer_labels,
+                           tokenizer_cot,
+                           model_cot,
+                           tokenizer_re_rank,
+                           model_re_rank,
+                           yes_token_id,
+                           yes_g_token_id,
+                           no_token_id,
+                           no_g_token_id,
+                           ks)
+    print(str("MAP@K scores for our proposed model:\n" + str(map_k_scores_proposed)))
+    with open("map_scores.txt","a") as f:
+        f.write("MAP@K scores for our proposed model"+str(map_k_scores_proposed) + "\n")
     
-
+    
 
 ####### INFER for Re-ranker without fine-tune CoT  #########
     decode_steps = 0
@@ -438,6 +588,29 @@ if __name__ == "__main__":
     PRETRAINED_COT_MODEL, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
     )
     #infer with pretrained cot and fine-tuned re-ranker
+    map_k_scores_without_finetuned_cot = predict(test_dataset,
+                           correct_df,
+                           decode_steps,
+                           num_of_top_retrieve_result,
+                           num_of_top_final_result,
+                           alpha,
+                           beta,
+                           tokenizer_retrieve,
+                           model_retrieve,
+                           infer_embeds,
+                           infer_labels,
+                           pre_tokenizer_cot,
+                           pre_model_cot,
+                           tokenizer_re_rank,
+                           model_re_rank,
+                           yes_token_id,
+                           yes_g_token_id,
+                           no_token_id,
+                           no_g_token_id,
+                           ks)
+    print(str("MAP@K scores w/o finetuned CoT model:\n" + str(map_k_scores_without_finetuned_cot)))
+    with open("map_scores.txt","a") as f:
+        f.write("MAP@K scores w/o finetuned CoT model:\n"+str(map_k_scores_without_finetuned_cot) + "\n")
 
 ####### INFER for Re-ranker without fine-tune Yes/No  #########
     decode_steps = 0
@@ -449,3 +622,26 @@ if __name__ == "__main__":
         PRETRAINED_RE_RANKER_MODEL, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
     )
     #infer with fine-tuned cot and pretrained re-ranker
+    map_k_scores_withoud_finetuned_re_ranker = predict(test_dataset,
+                           correct_df,
+                           decode_steps,
+                           num_of_top_retrieve_result,
+                           num_of_top_final_result,
+                           alpha,
+                           beta,
+                           tokenizer_retrieve,
+                           model_retrieve,
+                           infer_embeds,
+                           infer_labels,
+                           tokenizer_cot,
+                           model_cot,
+                           pre_tokenizer_re_rank,
+                           pre_model_re_rank,
+                           yes_token_id,
+                           yes_g_token_id,
+                           no_token_id,
+                           no_g_token_id,
+                           ks)
+    print(str("MAP@K scores w/o finetuned re-ranker model:\n" + str(map_k_scores_withoud_finetuned_re_ranker)))
+    with open("map_scores.txt","a") as f:
+        f.write("MAP@K scores w/o finetuned re-ranker model:\n"+str(map_k_scores_withoud_finetuned_re_ranker) + "\n")
