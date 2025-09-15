@@ -289,7 +289,6 @@ def generate_cot(row,tokenizer_cot,model_cot) :
             max_new_tokens=512,
             pad_token_id=tokenizer_cot.eos_token_id
         )
-    response=""
 
     #them vao skip_special_tokens=True
     start = inputs["input_ids"].shape[1]
@@ -299,9 +298,9 @@ def infer(
     row,
     batch_size,
     labels,
+    thought,
     tokenizer_re_ranker,
     model_re_ranker,
-    thought,
     decode_steps,
     yes_token_id,
     yes_g_token_id,
@@ -311,6 +310,7 @@ def infer(
 ):
     categories, misconceptions = labels
     assert len(categories) == batch_size and len(misconceptions) == batch_size
+
 
     all_scores = []
     n = batch_size
@@ -373,8 +373,7 @@ def predict(
     num_of_top_final_result,
     alpha,
     beta,
-    tokenizer_cot,
-    model_cot,
+    finetuned_cot,
     tokenizer_re_ranker,
     model_re_ranker,
     yes_token_id,
@@ -397,9 +396,13 @@ def predict(
         if idx < 3:
             print(f"--This is the {idx} test---")
 
-        candidate_labels, candidate_labels_scores = dataset['all_candidate_labels'] , dataset['all_candidate_scores']
+        candidate_labels, candidate_labels_scores = row["candidate_labels"] , row["candidate_label_scores"]
 
-        thought = generate_cot(row, tokenizer_cot, model_cot)
+        if finetuned_cot == True :
+            thought = row["finetuned_cot_response"]
+        else :
+            thought = row["pre_cot_response"]
+            
 
         categories = []
         misconceptions = []
@@ -419,14 +422,15 @@ def predict(
             row,
             batch_size,
             labels,
+            thought,
             tokenizer_re_ranker,
             model_re_ranker,
-            thought,
             decode_steps,
             yes_token_id,
             yes_g_token_id,
             no_token_id,
-            no_g_token_id
+            no_g_token_id,
+            sub_batch_size=7
         )
 
         sorted_candidate_desc, _ = ensemble(candidate_labels_scores, ranking_scores, alpha, beta)
@@ -518,7 +522,7 @@ def infer_reranker_only(dataset,
                         yes_g_token_id,
                         no_token_id,
                         no_g_token_id,              # used for prompt tokenization inside tokenize_input_for_infer_only
-                        sub_batch_size=5):
+                        sub_batch_size=7):
 
 
     training_df = pd.read_csv(training_df_path, keep_default_na=False)
@@ -656,18 +660,19 @@ def get_args():
     return parser.parse_args()
 
 def infer_retrieval_only(
-    all_candidate_labels,
+    test_df,
     correct_labels,
     ks
 ):
-
+    all_candidate_labels = test_df["candidate_labels"]
+    correct_labels = correct_labels
     map_k_scores_retrieval = cal_map_ks(all_candidate_labels,correct_labels,ks)
     print(str("MAP@K scores for our proposed model:\n" + str(map_k_scores_retrieval)))
     with open("map_scores.txt","a") as f:
         f.write("MAP@K scores for our proposed model"+str(map_k_scores_retrieval) + "\n")
 
 
-def infer_rerank_only(
+def infer_only_rerank(
     test_dataset,
     training_df_path,
     tokenizer_re_rank,
@@ -701,8 +706,6 @@ def infer_rerank_only(
     return map_k_scores_rerank_only, infer_only_candidate_labels
 def infer_proposed_model(
     tokenizer_re_rank,
-    tokenizer_cot,
-    model_cot,
     model_re_rank,
     test_dataset,
     correct_labels,
@@ -718,7 +721,8 @@ def infer_proposed_model(
 
     yes_g_token_id = tokenizer_re_rank.encode(" Yes", add_special_tokens=False)[0]
     no_g_token_id = tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
-
+    
+    finetuned_cot = True
     # run prediction
     map_k_scores_proposed = predict(
         test_dataset,
@@ -727,8 +731,7 @@ def infer_proposed_model(
         num_of_top_final_result,
         alpha,
         beta,
-        tokenizer_cot,
-        model_cot,
+        finetuned_cot,
         tokenizer_re_rank,
         model_re_rank,
         yes_token_id,
@@ -749,8 +752,6 @@ def infer_without_finetune_cot(
     num_of_top_final_result,
     alpha,
     beta,
-    pre_tokenizer_cot,
-    pre_model_cot,
     tokenizer_re_rank,
     model_re_rank,
     yes_token_id,
@@ -758,7 +759,8 @@ def infer_without_finetune_cot(
     no_token_id,
     no_g_token_id,
     ks
-):
+):  
+    finetuned_cot =False
     map_k_scores_without_finetuned_cot = predict(
         test_dataset,
         correct_labels,
@@ -766,8 +768,7 @@ def infer_without_finetune_cot(
         num_of_top_final_result,
         alpha,
         beta,
-        pre_tokenizer_cot,
-        pre_model_cot,
+        finetuned_cot,
         tokenizer_re_rank,
         model_re_rank,
         yes_token_id,
@@ -787,8 +788,6 @@ def infer_without_finetune_rerank(
     num_of_top_final_result,
     alpha,
     beta,
-    tokenizer_cot,
-    model_cot,
     pre_tokenizer_re_rank,
     pre_model_re_rank,
     yes_token_id,
@@ -796,7 +795,9 @@ def infer_without_finetune_rerank(
     no_token_id,
     no_g_token_id,
     ks,
-):
+):  
+    
+    finetuned_cot = True
     map_k_scores_withoud_finetuned_re_ranker = predict(
         test_dataset,
         correct_labels,
@@ -804,8 +805,7 @@ def infer_without_finetune_rerank(
         num_of_top_final_result,
         alpha,
         beta,
-        tokenizer_cot,
-        model_cot,
+        finetuned_cot,
         pre_tokenizer_re_rank,
         pre_model_re_rank,
         yes_token_id,
@@ -839,8 +839,6 @@ if __name__ == "__main__":
         bnb_4bit_quant_type="nf4",
         bnb_4bit_compute_dtype=torch.bfloat16 
     )
-
-
     #finetuned model : cot , re-rank
     #cot model
     MODEL_COT =""
@@ -853,49 +851,10 @@ if __name__ == "__main__":
 
     decode_steps=0
 
-    
-    # Config lai ten model / model path / data path
-    ##Load retrieval model
-    
-    state_dict = torch.load("best_model_proposed_110.pth", map_location="cuda")
-    model_retrieve_path = 'mathbert_model/transformers/default/1'
-    tokenizer_retrieve_path = 'mathbert_tokenizer/transformers/default/1'
-    tokenizer_retrieve = AutoTokenizer.from_pretrained(tokenizer_retrieve_path)
-    model_retrieve = AutoModel.from_pretrained(model_retrieve_path).to("cuda")
-    model_retrieve = torch.nn.DataParallel(model_retrieve)
-    model_retrieve.load_state_dict(state_dict)
-
-    embedded_training_dataset_path = 'embeddings_test110.csv'
-    infer_data = pd.read_csv(embedded_training_dataset_path)
-    
-    infer_embeds_list = infer_data['text_embed'].apply(lambda x: torch.tensor(ast.literal_eval(x), dtype=torch.float32))
-    infer_embeds = torch.stack(list(infer_embeds_list.values))
-    infer_embeds = F.normalize(infer_embeds, dim=1).to(device)
-    infer_labels = infer_data['label']
-
-
-    ####### Load dataset for evaluation #########
-
-    #chua biet 2 ham nay dung lam gi
-    def tok(row):
-        text = row['text_train']
-        return tokenizer_retrieve(text, truncation=True, padding='max_length', max_length=512)
-    def collate_fn(batch):
-        input_ids = torch.stack([item["input_ids"] for item in batch])
-        attention_mask = torch.stack([item["attention_mask"] for item in batch])
-        token_type_ids = torch.stack([item["token_type_ids"] for item in batch])
-        labels = torch.stack([item["label"] for item in batch])
-        return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "token_type_ids": token_type_ids,
-            "labels": labels
-        }
 
     #test_data
-    test= prepare_df1('test.csv')
-    test_dataset = Dataset.from_pandas(test)
-    test_dataset, all_candidate_labels , all_candidate_scores = retrieve_all(test_dataset,tokenizer_retrieve,model_retrieve,num_of_top_retrieve_result,infer_embeds,infer_labels,batch_size=20)
+    test_df= pd.read_csv('test.csv',keep_default_na=False)
+    test_dataset = Dataset.from_pandas(test_df)
 
     #ground_truth 
     data_path = 'test_split.csv'
@@ -915,72 +874,7 @@ if __name__ == "__main__":
     correct_df = correct_df.reset_index(drop=True)
     assert len(correct_df) == len(test_dataset), f"len(correct_df)={len(correct_df)} != len(test_dataset)={len(test_dataset)}"
     correct_labels = correct_df['Category:Misconception'].reset_index(drop=True)
-    # dataset = Dataset.from_pandas(df)
-    # temp_dataset= dataset
-    # dataset = dataset.map(tok, batch= True, remove_columns=[col for col in dataset.column_names if col != 'label'])
-    # dataset.set_format(type="torch")
-    # infer_dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=4, pin_memory=True, drop_last=True, collate_fn=collate_fn)
-    # print(len(infer_dataloader))
-    
-    ######## INFER for our proposed model retrieval + cot + reranker #########
-    
 
-    # ######## INFER for Retrieval model #########
-    # model_name = 'tbs17/MathBERT'
-    # model_retrieval_path =""
-    # model_retrieval = AutoModel.from_pretrained(model_name)
-    # tokenizer_retrieval = AutoTokenizer.from_pretrained(model_name)
-
-    # model_retrieval = torch.nn.DataParallel(model_retrieval, device_ids=list(range(torch.cuda.device_count())))
-
-    # state_dict = torch.load('checkpoints/best_model_proposed_110.pth')
-    # model_retrieval.load_state_dict(state_dict) 
-
-    # result = infer(model_retrieval, infer_dataloader)
-    # save_embeddings_to_csv(result, 'embeddings_retrieval_test_split.csv')
-    
-
-    #Load CoT Model
-    tokenizer_cot = AutoTokenizer.from_pretrained(MODEL_COT)
-    if tokenizer_cot.pad_token is None:
-        tokenizer_cot.pad_token = tokenizer_cot.eos_token
-    model_cot = AutoModelForCausalLM.from_pretrained(
-    MODEL_COT, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
-    )
-
-    #Load Re-ranker Model
-    tokenizer_re_rank = AutoTokenizer.from_pretrained(MODEL_PATH)
-    if tokenizer_re_rank.pad_token is None:
-        tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
-    
-    model_re_rank = AutoModelForCausalLM.from_pretrained(
-        MODEL_PATH, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
-    )
-
-    #yes,no id
-    yes_token_id = tokenizer_re_rank.encode("Yes", add_special_tokens=False)[0]
-    no_token_id = tokenizer_re_rank.encode("No", add_special_tokens=False)[0]
-
-    yes_g_token_id = tokenizer_re_rank.encode(" Yes",add_special_tokens=False)[0]
-    no_g_token_id = tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
-
-    #pretrained cot config
-    decode_steps = 0
-    pre_tokenizer_cot = AutoTokenizer.from_pretrained(PRETRAINED_COT_MODEL)
-    if pre_tokenizer_cot.pad_token is None:
-        pre_tokenizer_cot.pad_token = tokenizer_cot.eos_token
-    pre_model_cot = AutoModelForCausalLM.from_pretrained(
-    PRETRAINED_COT_MODEL, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
-    )
-
-    #pretrained rerank config
-    pre_tokenizer_re_rank = AutoTokenizer.from_pretrained(PRETRAINED_RE_RANKER_MODEL)
-    if pre_tokenizer_re_rank.pad_token is None:
-        pre_tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
-    
-    pre_model_re_rank = AutoModelForCausalLM.from_pretrained(
-        PRETRAINED_RE_RANKER_MODEL, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
-    )
     
     ############ arg --mode
 
@@ -988,24 +882,133 @@ if __name__ == "__main__":
 
     ######## INFER for retrieval only #########
     if args.mode == "retrieval_only":
-        infer_retrieval_only(all_candidate_labels,correct_labels,ks)
+        infer_retrieval_only(test_df,correct_labels,ks)
 
     ######## INFER for rerank only ############
     if args.mode == "rerank_only":
-        infer_reranker_only(test_dataset,training_df_path,tokenizer_re_rank,model_re_rank,yes_token_id,yes_g_token_id,no_token_id,no_g_token_id,sub_batch_size=5)
+
+        #load model rerank(finetuned)
+        tokenizer_re_rank = AutoTokenizer.from_pretrained(MODEL_PATH)
+        if tokenizer_re_rank.pad_token is None:
+            tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
+        
+        model_re_rank = AutoModelForCausalLM.from_pretrained(
+            MODEL_PATH, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
+        )
+        yes_token_id = tokenizer_re_rank.encode("Yes", add_special_tokens=False)[0]
+        no_token_id = tokenizer_re_rank.encode("No", add_special_tokens=False)[0]
+
+        yes_g_token_id = tokenizer_re_rank.encode(" Yes",add_special_tokens=False)[0]
+        no_g_token_id = tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
+
+        #infer
+        infer_only_rerank(
+            test_dataset,
+            training_df_path,
+            tokenizer_re_rank,
+            model_re_rank,
+            yes_token_id,
+            yes_g_token_id,
+            no_token_id,
+            no_g_token_id,
+            sub_batch_size=5,
+        )
 
     ######## INFER for proposed model ###################
     if args.mode == "proposed_model":
-        infer_proposed_model(tokenizer_re_rank,tokenizer_cot,model_cot,model_re_rank,test_dataset,correct_labels,decode_steps,num_of_top_retrieve_result,alpha,beta,ks)
+
+        #load rerank model(finetuned)
+        tokenizer_re_rank = AutoTokenizer.from_pretrained(MODEL_PATH)
+        if tokenizer_re_rank.pad_token is None:
+            tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
+        
+        model_re_rank = AutoModelForCausalLM.from_pretrained(
+            MODEL_PATH, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
+        )
+        
+        
+        #infer
+        infer_proposed_model(
+            tokenizer_re_rank,
+            model_re_rank,
+            test_dataset,
+            correct_labels,
+            decode_steps,
+            num_of_top_retrieve_result,
+            alpha,
+            beta,
+            ks,
+        )
 
     ####### INFER for Re-ranker without fine-tune CoT  #########
 
     if args.mode == "proposed_model_wo_finetuned_cot":
-        infer_without_finetune_cot(test_dataset,correct_labels,decode_steps,num_of_top_final_result,alpha,beta,pre_tokenizer_cot,pre_model_cot,tokenizer_re_rank,model_re_rank,yes_token_id,yes_g_token_id,no_token_id,no_g_token_id,ks)
 
+        #load re-rank model
+        tokenizer_re_rank = AutoTokenizer.from_pretrained(MODEL_PATH)
+        if tokenizer_re_rank.pad_token is None:
+            tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
+        
+        model_re_rank = AutoModelForCausalLM.from_pretrained(
+            MODEL_PATH, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
+        )
+        yes_token_id = tokenizer_re_rank.encode("Yes", add_special_tokens=False)[0]
+        no_token_id = tokenizer_re_rank.encode("No", add_special_tokens=False)[0]
+        yes_g_token_id = tokenizer_re_rank.encode(" Yes",add_special_tokens=False)[0]
+        no_g_token_id = tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
+        
+        
+        #infer
+        infer_without_finetune_cot(
+            test_dataset,
+            correct_labels,
+            decode_steps,
+            num_of_top_final_result,
+            alpha,
+            beta,
+            tokenizer_re_rank,
+            model_re_rank,
+            yes_token_id,
+            yes_g_token_id,
+            no_token_id,
+            no_g_token_id,
+            ks,
+        )
     ####### INFER for Re-ranker without fine-tune ReRanker  #########
     if args.mode == "proposed_model_wo_finetuned_rerank":
-        infer_without_finetune_rerank(test_dataset,correct_labels,decode_steps,num_of_top_final_result,alpha,beta,tokenizer_cot,model_cot,pre_tokenizer_re_rank,pre_model_re_rank,yes_token_id,yes_g_token_id,no_token_id,no_g_token_id,ks)
+
+        
+        #load pre_finetuned_rerank_model
+        pre_tokenizer_re_rank = AutoTokenizer.from_pretrained(PRETRAINED_RE_RANKER_MODEL)
+        if pre_tokenizer_re_rank.pad_token is None:
+            pre_tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
+        
+        pre_model_re_rank = AutoModelForCausalLM.from_pretrained(
+            PRETRAINED_RE_RANKER_MODEL, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
+        )
+
+        yes_token_id = pre_tokenizer_re_rank.encode("Yes", add_special_tokens=False)[0]
+        no_token_id = pre_tokenizer_re_rank.encode("No", add_special_tokens=False)[0]
+        yes_g_token_id = pre_tokenizer_re_rank.encode(" Yes",add_special_tokens=False)[0]
+        no_g_token_id = pre_tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
+        
+        
+        #infer
+        infer_without_finetune_rerank(
+            test_dataset,
+            correct_labels,
+            decode_steps,
+            num_of_top_final_result,
+            alpha,
+            beta,
+            pre_tokenizer_re_rank,
+            pre_model_re_rank,
+            yes_token_id,
+            yes_g_token_id,
+            no_token_id,
+            no_g_token_id,
+            ks,
+        )
 
 
 
