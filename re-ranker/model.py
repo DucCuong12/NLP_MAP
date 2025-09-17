@@ -14,7 +14,7 @@ class CrossEntropyTrainer(Trainer):
         self.loss_fct = nn.CrossEntropyLoss()
     
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        labels = inputs.pop("labels")
+        label = inputs.pop("label")
         
         outputs = model(**inputs)
         logits = outputs.logits  
@@ -33,7 +33,7 @@ class CrossEntropyTrainer(Trainer):
         binary_logits = torch.stack([no_logits, yes_logits], dim=1)
         
         # 1 ="Yes" /" Yes" ; 0 = "No" / " No"
-        binary_labels = (labels == 1).long()
+        binary_labels = (label == 1).long()
         
         if self.decode_steps < 3:
             with torch.no_grad():
@@ -48,14 +48,14 @@ class CrossEntropyTrainer(Trainer):
                     decoded = self.tokenizer.decode(seq, skip_special_tokens=True)
                     print(f"Batch {i} generated: {decoded}") 
             
-            print(f"--- Labels: {labels} ---")
+            print(f"--- Labels: {label} ---")
             print(f"--- Max Yes Logits: {yes_logits} ---")
             print(f"--- Max No Logits: {no_logits} ---")
             self.decode_steps += 1
         
         loss = self.loss_fct(binary_logits, binary_labels)
         
-        inputs["labels"] = labels
+        inputs["label"] = label
         
         return (loss, outputs) if return_outputs else loss
 

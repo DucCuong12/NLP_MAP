@@ -9,7 +9,8 @@ class TokenizeData :
     def preprocess_function_mini_batch(self,thoughts):
         df = self.df
         prompts = []
-        for q_text, mc_answer, explanation, category, misconception , i in zip(
+        for id, q_text, mc_answer, explanation, category, misconception , i in zip(
+            df['row_id'],
             df['QuestionText'],
             df['MC_Answer'],
             df['StudentExplanation'],
@@ -18,6 +19,7 @@ class TokenizeData :
             range(len(df['StudentExplanation']))
 
         ):
+
             
             prompt = f"""
 <|im_start|>system
@@ -38,11 +40,11 @@ Part 3: Misconception : This is a text description of the specific thinking erro
 
 YOUR TASK:
 
-1. Compare the THOUGHT ANALYSIS to the Category and Misconception in PROPOSED CLASSIFICATION based on PROBLEM DATA, then consider the following 3 questions :
-1.1 From the THOUGHT ANALYSIS and your analysis, does the True/False conclusion of student's answer match the first part of the "Category" label?
-1.2 Does the Correct/Misconception/Neither conclusion match the second part of the "Category" label?
-1.3 If the category is ..._Misconception, does the student's error align with the provided "Misconception" text? (If the "Category" in PROPOSED CLASSIFICATION is ..._Correct or ..._Neither, you can skip this step) 
-2. Final Conclusion: A "Yes" is only possible if all checks in Step 1 pass. If there is any mismatch at any point, the answer must be "No".
+Step 1. Compare the THOUGHT ANALYSIS to the Category and Misconception in PROPOSED CLASSIFICATION based on PROBLEM DATA, then consider the following 3 questions :
+Question 1.1 From the THOUGHT ANALYSIS and your analysis, does the True/False conclusion of student's answer match the first part of the "Category" label?
+Question 1.2 Does the Correct/Misconception/Neither conclusion match the second part of the "Category" label?
+Question 1.3 If the category is ..._Misconception, does the student's error align with the provided "Misconception" text? (If the "Category" in PROPOSED CLASSIFICATION is ..._Correct or ..._Neither, you can skip this step)
+Step 2. Final Conclusion: A "Yes" is only possible if all checks in Step 1 pass. If there is any mismatch at any point, the answer must be "No".
 
 **CONSTRAINT:
 You are only allowed to output only one token ("Yes"/"No").
@@ -60,7 +62,7 @@ Category: '{category}'
 Misconception: '{misconception}'
 
 THOUGHT ANALYSIS:
-{thoughts[i]}
+{thoughts[id]}
 
 <|im_end|>
 <|im_start|>assistant
@@ -77,7 +79,7 @@ THOUGHT ANALYSIS:
             examples['prompt'],
             padding=False,
             truncation=True,
-            max_length=2048,
+            max_length=1696,
             return_length=True,
             add_special_tokens=True,
         )
