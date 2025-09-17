@@ -21,14 +21,17 @@ class CrossEntropyTrainer(Trainer):
         
         last_token_logits = logits[:, -1, :]  
         
-        yes_logits = torch.max(
-            last_token_logits[:, self.yes_token_id],
-            last_token_logits[:, self.yes_g_token_id]
-        )
-        no_logits = torch.max(
-            last_token_logits[:, self.no_token_id],
-            last_token_logits[:, self.no_g_token_id]
-        )
+        yes_logits = last_token_logits[:,self.yes_token_id]
+        no_logits = last_token_logits[:,self.no_token_id]
+        
+        # yes_logits = torch.max(
+        #     last_token_logits[:, self.yes_token_id],
+        #     last_token_logits[:, self.yes_g_token_id]
+        # )
+        # no_logits = torch.max(
+        #     last_token_logits[:, self.no_token_id],
+        #     last_token_logits[:, self.no_g_token_id]
+        # )
         # theo chieu doc --> gom 2 tensor list : 1 toan no, 1 toan yes
         binary_logits = torch.stack([no_logits, yes_logits], dim=1)
         
