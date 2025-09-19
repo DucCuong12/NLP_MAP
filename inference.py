@@ -659,165 +659,6 @@ def get_args():
 
     return parser.parse_args()
 
-def infer_retrieval_only(
-    test_df,
-    correct_labels,
-    ks
-):
-    all_candidate_labels = test_df["candidate_labels"]
-    correct_labels = correct_labels
-    map_k_scores_retrieval = cal_map_ks(all_candidate_labels,correct_labels,ks)
-    print(str("MAP@K scores for our proposed model:\n" + str(map_k_scores_retrieval)))
-    with open("map_scores.txt","a") as f:
-        f.write("MAP@K scores for our proposed model"+str(map_k_scores_retrieval) + "\n")
-
-
-def infer_only_rerank(
-    test_dataset,
-    training_df_path,
-    tokenizer_re_rank,
-    model_re_rank,
-    yes_token_id,
-    yes_g_token_id,
-    no_token_id,
-    no_g_token_id,
-    correct_labels,
-    ks,
-    sub_batch_size=5
-):
-
-    infer_only_candidate_labels = infer_reranker_only(
-        test_dataset,
-        training_df_path,
-        tokenizer_re_rank,
-        model_re_rank,
-        yes_token_id,
-        yes_g_token_id,
-        no_token_id,
-        no_g_token_id,
-        sub_batch_size=sub_batch_size
-    )
-
-    map_k_scores_rerank_only = cal_map_ks(infer_only_candidate_labels, correct_labels, ks)
-
-    with open("map_scores.txt", "a") as f:
-        f.write("MAP@K scores for reranker model only" + str(map_k_scores_rerank_only) + "\n")
-
-    return map_k_scores_rerank_only, infer_only_candidate_labels
-def infer_proposed_model(
-    tokenizer_re_rank,
-    model_re_rank,
-    test_dataset,
-    correct_labels,
-    decode_steps,
-    num_of_top_final_result,
-    alpha,
-    beta,
-    ks
-):
-    # compute yes/no token ids from provided tokenizer_re_rank
-    yes_token_id = tokenizer_re_rank.encode("Yes", add_special_tokens=False)[0]
-    no_token_id = tokenizer_re_rank.encode("No", add_special_tokens=False)[0]
-
-    yes_g_token_id = tokenizer_re_rank.encode(" Yes", add_special_tokens=False)[0]
-    no_g_token_id = tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
-    
-    finetuned_cot = True
-    # run prediction
-    map_k_scores_proposed = predict(
-        test_dataset,
-        correct_labels,
-        decode_steps,
-        num_of_top_final_result,
-        alpha,
-        beta,
-        finetuned_cot,
-        tokenizer_re_rank,
-        model_re_rank,
-        yes_token_id,
-        yes_g_token_id,
-        no_token_id,
-        no_g_token_id,
-        ks
-    )
-
-    print("MAP@K scores for our proposed model:\n" + str(map_k_scores_proposed))
-    with open("map_scores.txt", "a") as f:
-        f.write("MAP@K scores for our proposed model" + str(map_k_scores_proposed) + "\n")
-
-def infer_without_finetune_cot(
-    test_dataset,
-    correct_labels,
-    decode_steps,
-    num_of_top_final_result,
-    alpha,
-    beta,
-    tokenizer_re_rank,
-    model_re_rank,
-    yes_token_id,
-    yes_g_token_id,
-    no_token_id,
-    no_g_token_id,
-    ks
-):  
-    finetuned_cot =False
-    map_k_scores_without_finetuned_cot = predict(
-        test_dataset,
-        correct_labels,
-        decode_steps,
-        num_of_top_final_result,
-        alpha,
-        beta,
-        finetuned_cot,
-        tokenizer_re_rank,
-        model_re_rank,
-        yes_token_id,
-        yes_g_token_id,
-        no_token_id,
-        no_g_token_id,
-        ks
-    )
-    print("MAP@K scores w/o finetuned CoT model:\n" + str(map_k_scores_without_finetuned_cot))
-    with open("map_scores.txt", "a") as f:
-        f.write("MAP@K scores w/o finetuned CoT model:\n" + str(map_k_scores_without_finetuned_cot) + "\n")
-    return map_k_scores_without_finetuned_cot
-def infer_without_finetune_rerank(
-    test_dataset,
-    correct_labels,
-    decode_steps,
-    num_of_top_final_result,
-    alpha,
-    beta,
-    pre_tokenizer_re_rank,
-    pre_model_re_rank,
-    yes_token_id,
-    yes_g_token_id,
-    no_token_id,
-    no_g_token_id,
-    ks,
-):  
-    
-    finetuned_cot = True
-    map_k_scores_withoud_finetuned_re_ranker = predict(
-        test_dataset,
-        correct_labels,
-        decode_steps,
-        num_of_top_final_result,
-        alpha,
-        beta,
-        finetuned_cot,
-        pre_tokenizer_re_rank,
-        pre_model_re_rank,
-        yes_token_id,
-        yes_g_token_id,
-        no_token_id,
-        no_g_token_id,
-        ks,
-    )
-    print("MAP@K scores w/o finetuned re-ranker model:\n" + str(map_k_scores_withoud_finetuned_re_ranker))
-    with open("map_scores.txt", "a") as f:
-        f.write("MAP@K scores w/o finetuned re-ranker model:\n" + str(map_k_scores_withoud_finetuned_re_ranker) + "\n")
-    return map_k_scores_withoud_finetuned_re_ranker
 
 
 
@@ -839,17 +680,24 @@ if __name__ == "__main__":
         bnb_4bit_quant_type="nf4",
         bnb_4bit_compute_dtype=torch.bfloat16 
     )
-    #finetuned model : cot , re-rank
-    #cot model
-    MODEL_COT =""
-    #re-ranker model
+    #finetuned reranker model (with finetuned cot model) :
     MODEL_PATH= ""
+    
+    #finetuned reranker model (without pre-trained cot model)
+    MODEL_WO_FT_COT=""
+
+    #finetuned reranker model (without cot model)
+    MODEL_WO_COT=""
+
+    #pretrained reranker model (with finetuned cot model)
+    MODEL_PRETRAIN_W_FT_COT = ""
 
     #pretrained model : 2 con Qwen3 8B , hoac co the dung chung 1 model Qwen3 8B
-    PRETRAINED_RE_RANKER_MODEL = ""
-    PRETRAINED_COT_MODEL = ""
+    
 
+    PRETRAINED_RE_RANKER_MODEL = ""
     decode_steps=0
+    
 
 
     #test_data
@@ -880,136 +728,121 @@ if __name__ == "__main__":
 
     args = get_args()
 
+
     ######## INFER for retrieval only #########
     if args.mode == "retrieval_only":
-        infer_retrieval_only(test_df,correct_labels,ks)
+        infer_result_labels = test_df["candidate_labels"]
 
-    ######## INFER for rerank only ############
-    if args.mode == "rerank_only":
+    # ######## INFER for rerank only ############
+    # if args.mode == "rerank_only":
 
-        #load model rerank(finetuned)
-        tokenizer_re_rank = AutoTokenizer.from_pretrained(MODEL_PATH)
-        if tokenizer_re_rank.pad_token is None:
-            tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
+    #     #load model rerank(finetuned)
+    #     tokenizer = AutoTokenizer.from_pretrained(MODEL_WO_COT)
+    #     if tokenizer.pad_token is None:
+    #         tokenizer.pad_token = tokenizer.eos_token
         
-        model_re_rank = AutoModelForCausalLM.from_pretrained(
-            MODEL_PATH, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
-        )
-        yes_token_id = tokenizer_re_rank.encode("Yes", add_special_tokens=False)[0]
-        no_token_id = tokenizer_re_rank.encode("No", add_special_tokens=False)[0]
+    #     model = AutoModelForCausalLM.from_pretrained(
+    #         MODEL_WO_COT, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
+    #     )
+    #     yes_token_id = tokenizer.encode("Yes", add_special_tokens=False)[0]
+    #     no_token_id = tokenizer.encode("No", add_special_tokens=False)[0]
 
-        yes_g_token_id = tokenizer_re_rank.encode(" Yes",add_special_tokens=False)[0]
-        no_g_token_id = tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
+    #     yes_g_token_id = tokenizer.encode(" Yes",add_special_tokens=False)[0]
+    #     no_g_token_id = tokenizer.encode(" No", add_special_tokens=False)[0]
 
-        #infer
-        infer_only_rerank(
-            test_dataset,
-            training_df_path,
-            tokenizer_re_rank,
-            model_re_rank,
-            yes_token_id,
-            yes_g_token_id,
-            no_token_id,
-            no_g_token_id,
-            sub_batch_size=5,
-        )
+    #     #infer
+    #     infer_result_labels = infer_reranker_only(
+    #         test_dataset,
+    #         training_df_path,
+    #         tokenizer,
+    #         model,
+    #         yes_token_id,
+    #         yes_g_token_id,
+    #         no_token_id,
+    #         no_g_token_id,
+    #         sub_batch_size=5,
+    #     )
 
     ######## INFER for proposed model ###################
     if args.mode == "proposed_model":
 
+
         #load rerank model(finetuned)
-        tokenizer_re_rank = AutoTokenizer.from_pretrained(MODEL_PATH)
-        if tokenizer_re_rank.pad_token is None:
-            tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
         
-        model_re_rank = AutoModelForCausalLM.from_pretrained(
+        model= AutoModelForCausalLM.from_pretrained(
             MODEL_PATH, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
         )
-        
-        
-        #infer
-        infer_proposed_model(
-            tokenizer_re_rank,
-            model_re_rank,
-            test_dataset,
-            correct_labels,
-            decode_steps,
-            num_of_top_retrieve_result,
-            alpha,
-            beta,
-            ks,
-        )
+        finetuned_cot = True
 
     ####### INFER for Re-ranker without fine-tune CoT  #########
 
     if args.mode == "proposed_model_wo_finetuned_cot":
 
         #load re-rank model
-        tokenizer_re_rank = AutoTokenizer.from_pretrained(MODEL_PATH)
-        if tokenizer_re_rank.pad_token is None:
-            tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
+        tokenizer= AutoTokenizer.from_pretrained(MODEL_WO_FT_COT)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
         
-        model_re_rank = AutoModelForCausalLM.from_pretrained(
-            MODEL_PATH, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
+        model= AutoModelForCausalLM.from_pretrained(
+            MODEL_WO_FT_COT, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
         )
-        yes_token_id = tokenizer_re_rank.encode("Yes", add_special_tokens=False)[0]
-        no_token_id = tokenizer_re_rank.encode("No", add_special_tokens=False)[0]
-        yes_g_token_id = tokenizer_re_rank.encode(" Yes",add_special_tokens=False)[0]
-        no_g_token_id = tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
-        
-        
-        #infer
-        infer_without_finetune_cot(
-            test_dataset,
-            correct_labels,
-            decode_steps,
-            num_of_top_final_result,
-            alpha,
-            beta,
-            tokenizer_re_rank,
-            model_re_rank,
-            yes_token_id,
-            yes_g_token_id,
-            no_token_id,
-            no_g_token_id,
-            ks,
-        )
+        yes_token_id = tokenizer.encode("Yes", add_special_tokens=False)[0]
+        no_token_id = tokenizer.encode("No", add_special_tokens=False)[0]
+        yes_g_token_id = tokenizer.encode(" Yes",add_special_tokens=False)[0]
+        no_g_token_id = tokenizer.encode(" No", add_special_tokens=False)[0]
+        finetuned_cot = False
+
     ####### INFER for Re-ranker without fine-tune ReRanker  #########
     if args.mode == "proposed_model_wo_finetuned_rerank":
 
         
         #load pre_finetuned_rerank_model
-        pre_tokenizer_re_rank = AutoTokenizer.from_pretrained(PRETRAINED_RE_RANKER_MODEL)
-        if pre_tokenizer_re_rank.pad_token is None:
-            pre_tokenizer_re_rank.pad_token = tokenizer_re_rank.eos_token
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_PRETRAIN_W_FT_COT)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
         
-        pre_model_re_rank = AutoModelForCausalLM.from_pretrained(
-            PRETRAINED_RE_RANKER_MODEL, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
+        model= AutoModelForCausalLM.from_pretrained(
+            MODEL_PRETRAIN_W_FT_COT, device_map="auto", trust_remote_code=True, quantization_config=quantization_config
         )
 
-        yes_token_id = pre_tokenizer_re_rank.encode("Yes", add_special_tokens=False)[0]
-        no_token_id = pre_tokenizer_re_rank.encode("No", add_special_tokens=False)[0]
-        yes_g_token_id = pre_tokenizer_re_rank.encode(" Yes",add_special_tokens=False)[0]
-        no_g_token_id = pre_tokenizer_re_rank.encode(" No", add_special_tokens=False)[0]
+        yes_token_id = tokenizer.encode("Yes", add_special_tokens=False)[0]
+        no_token_id = tokenizer.encode("No", add_special_tokens=False)[0]
+        yes_g_token_id = tokenizer.encode(" Yes", add_special_tokens=False)[0]
+        no_g_token_id = tokenizer.encode(" No", add_special_tokens=False)[0]
+        finetuned_cot = True
         
         
-        #infer
-        infer_without_finetune_rerank(
+    if args.mode not in ["retrieval_only","rerrank_only"] :
+        map_scores = predict(
             test_dataset,
             correct_labels,
             decode_steps,
             num_of_top_final_result,
             alpha,
             beta,
-            pre_tokenizer_re_rank,
-            pre_model_re_rank,
+            finetuned_cot,
+            tokenizer,
+            model,
             yes_token_id,
             yes_g_token_id,
             no_token_id,
             no_g_token_id,
-            ks,
+            ks
         )
+    
+    # khong dung rerank only
 
+
+    if args.mode in ["retrieval_only","rerank_only"]:
+        map_scores = cal_map_ks(infer_result_labels,correct_labels,ks)
+
+
+    print("MAP@K scores for "+str(args.mode)+" is: " + str(map_scores))
+    with open("map_scores.txt","a") as f:
+        f.write("MAP@K scores for "+str(args.mode)+" is: " + str(map_scores))
 
 
 
